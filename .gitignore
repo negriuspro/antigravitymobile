@@ -1,0 +1,35 @@
+﻿# Antigravity AI (archivos internos -- no subir al repo)
+antigravity.config.json
+CLAUDE.md
+.cursorrules
+.windsurfrules
+guia/
+.ai/
+.semgrep/
+
+# Environment
+.env
+.env.local
+.env.production
+.env*.local
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+.next/
+dist/
+build/
+out/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
