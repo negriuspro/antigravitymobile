@@ -1,0 +1,16 @@
+{
+  "name": "antigravitymobile",
+  "version": "1.0.0",
+  "description": "Antigravity AI — Panel remoto Flutter + FastAPI",
+  "scripts": {
+    "up": "docker compose up -d --build",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f",
+    "restart": "docker compose down && docker compose up -d --build",
+    "ps": "docker compose ps",
+    "pull": "git pull && docker compose up -d --build"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
