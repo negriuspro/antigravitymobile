@@ -1,0 +1,180 @@
+name: antigravitymobile
+
+services:
+
+  # ── Gateway Nginx ─────────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      - "${PUBLIC_HTTP_PORT:-3000}:3000"
+    restart: unless-stopped
+    labels:
+      com.antigravity.manage: "true"
+    networks:
+      - public
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Flutter Web Frontend ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./mobile
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    labels:
+      com.antigravity.manage: "true"
+    networks:
+      - internal
+    expose:
+      - "80"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./hub
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      HUB_HOST: "0.0.0.0"
+      HUB_PORT: "8000"
+      REDIS_URL: "redis://redis:6379/0"
+      DOCKER_HOST: "unix:///var/run/docker.sock"
+      DOCKER_ALLOWED_LABEL: "${DOCKER_ALLOWED_LABEL:-com.antigravity.manage=true}"
+      FILES_BASE_PATH: "/data/files"
+      APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3000}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - files-data:/data/files
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    labels:
+      com.antigravity.manage: "true"
+    networks:
+      - internal
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.75"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+
+  # ── Redis Cache ───────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    restart: unless-stopped
+    labels:
+      com.antigravity.manage: "true"
+    networks:
+      - internal
+    volumes:
+      - redis-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+          cpus: "0.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Watchtower (auto-redeploy al hacer git push + CI) ─────────────────────
+  watchtower:
+    image: containrrr/watchtower:latest
+    command: --interval 300 --label-enable --cleanup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    labels:
+      com.antigravity.manage: "true"
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.10"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    environment:
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  redis-data:
+    driver: local
+  files-data:
+    driver: local

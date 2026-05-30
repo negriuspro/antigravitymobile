@@ -1,0 +1,17 @@
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+*.iml
+*.ipr
+*.iws
+.idea/
+.git
+*.log
+android/.gradle
+android/captures
+ios/Pods
+ios/.symlinks
