@@ -33,3 +33,11 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Windows artifacts (no subir al repo)
+*.bat
+*.cmd
