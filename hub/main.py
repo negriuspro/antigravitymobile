@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.health import router as health_router
 from routes.chat import router as chat_router
-from routes.jarvis import router as jarvis_router
+from routes.daniel import router as daniel_router
 from routes.claude_code import router as claude_code_router
 from routes.servers import router as servers_router
 from routes.agi_agent import router as agi_agent_router
@@ -24,7 +24,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(chat_router)
-app.include_router(jarvis_router)
+app.include_router(daniel_router)
 app.include_router(claude_code_router)
 app.include_router(servers_router)
 app.include_router(agi_agent_router)

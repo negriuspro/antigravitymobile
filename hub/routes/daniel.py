@@ -5,15 +5,15 @@ from providers.anthropic import stream_claude
 router = APIRouter()
 
 
-class JarvisCommand(BaseModel):
+class DanielCommand(BaseModel):
     text: str
     context: str = "antigravity"
 
 
-@router.post("/jarvis")
-async def jarvis_command(cmd: JarvisCommand):
+@router.post("/daniel")
+async def daniel_command(cmd: DanielCommand):
     """
-    Jarvis envia el texto del comando aqui cuando escucha 'antigravity'.
+    Daniel envia el texto del comando aqui cuando escucha 'antigravity'.
     El Hub lo procesa con Claude y devuelve la respuesta.
     """
     if not cmd.text.strip():
@@ -21,7 +21,7 @@ async def jarvis_command(cmd: JarvisCommand):
 
     system_prompt = (
         "Eres el asistente IA de Antigravity. "
-        "El usuario envio este comando por voz via Jarvis. "
+        "El usuario envio este comando por voz via Daniel. "
         "Ejecuta la tarea o responde de forma clara y concisa."
     )
     messages = [
