@@ -62,3 +62,4 @@ Full WSL and LAN notes are in `docs/DOCKER_WSL.md`.
 - `backend`: FastAPI bound to `0.0.0.0:8000` inside Docker
 - `redis`: internal state/cache service
 - `future-services`: disabled placeholder profile
+# test
