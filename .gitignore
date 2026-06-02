@@ -41,3 +41,8 @@ logs/
 # Windows artifacts (no subir al repo)
 *.bat
 *.cmd
+
+*.bak
+*.bad
+*.fix
+FETCH_HEAD

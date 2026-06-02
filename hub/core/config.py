@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     docker_allowed_label: str = "com.antigravity.manage=true"
     files_base_path: str = "/data/files"
-    app_base_url: str = "http://localhost:3000"
+    app_base_url: str = "http://localhost"
 
     class Config:
         env_file = ".env"

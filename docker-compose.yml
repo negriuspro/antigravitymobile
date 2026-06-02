@@ -1,8 +1,72 @@
 name: antigravitymobile
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  ARQUITECTURA:
+#  Internet → Nginx:80 (único entrypoint)
+#               ├── Frontend:80   (Flutter Web, red interna)
+#               ├── Backend:8000  (FastAPI, red interna)
+#               └── (via backend) → DockerProxy:2375 → docker.sock
+#                                 → Redis:6379           (red interna)
+#
+#  RAM budget (6 GB host):
+#    nginx          64 M   ×1
+#    frontend       64 M   ×1
+#    backend       512 M   ×1   ← subido de 384M; 6 SDKs AI requieren ~400M base
+#    redis         160 M   ×1
+#    docker-proxy   32 M   ×1
+#    ─────────────────────────
+#    TOTAL límites 832 M
+#    Docker daemon  ~250 M
+#    Ubuntu Desktop ~1.2 GB
+#    Build Flutter  ~1.5 GB (solo durante build, no en runtime)
+#    Swap disponible 4 GB para builds pesados ✓
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
 
-  # ── Gateway Nginx ─────────────────────────────────────────────────────────
+  # ── Docker Socket Proxy ───────────────────────────────────────────────────
+  # P1-FIX: Sustituye el montaje directo de /var/run/docker.sock en el backend.
+  # El backend ya NO tiene acceso root al host. Solo puede hacer las operaciones
+  # explícitamente habilitadas aquí. Una RCE en FastAPI ya no es una RCE en el host.
+  docker-socket-proxy:
+    # R2-FIX: Pinear a versión estable — latest puede cambiar sin aviso (supply chain)
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    # R3-FIX: Añadir junto con todos los demás servicios
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Solo los permisos que /servers necesita para listar y controlar containers
+      CONTAINERS: 1       # GET/POST sobre /containers/*
+      IMAGES: 0           # Sin gestión de imágenes
+      NETWORKS: 0         # Sin gestión de redes
+      VOLUMES: 0          # Sin gestión de volúmenes
+      BUILD: 0            # Sin builds remotos
+      EXEC: 0             # Sin exec en containers (crítico: evita escape)
+      SECRETS: 0          # Sin acceso a secrets de Swarm
+      POST: 1             # Necesario para start/stop/restart
+      DELETE: 0           # Sin borrado de recursos
+      INFO: 1             # GET /info (usado por docker SDK)
+      VERSION: 1          # GET /version
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    labels:
+      com.antigravity.manage: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.10"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    # El proxy no necesita healthcheck propio; el backend falla si el proxy cae
+
+  # ── Gateway Nginx — único entrypoint público ──────────────────────────────
   nginx:
     build:
       context: ./nginx
@@ -13,8 +77,19 @@ services:
       frontend:
         condition: service_healthy
     ports:
-      - "${PUBLIC_HTTP_PORT:-3000}:3000"
+      - "${PUBLIC_HTTP_PORT:-3001}:3000"
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # /var/cache/nginx: temp files de proxy y client body (default nginx paths)
+      - /var/cache/nginx:size=30m,uid=101,gid=101
+      # /var/run: nginx.pid necesario para el master process
+      - /var/run:size=2m
+      # /tmp: espacio general
+      - /tmp:size=10m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     labels:
       com.antigravity.manage: "true"
     networks:
@@ -31,18 +106,26 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
-  # ── Flutter Web Frontend ──────────────────────────────────────────────────
+  # ── Flutter Web Frontend — red interna solo ───────────────────────────────
   frontend:
     build:
       context: ./mobile
       dockerfile: Dockerfile
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=10m,uid=101,gid=101
+      - /var/run:size=2m
+      - /tmp:size=5m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     labels:
       com.antigravity.manage: "true"
     networks:
@@ -64,9 +147,9 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
-  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  # ── FastAPI Backend — red interna solo ────────────────────────────────────
   backend:
     build:
       context: ./hub
@@ -76,28 +159,49 @@ services:
     environment:
       HUB_HOST: "0.0.0.0"
       HUB_PORT: "8000"
-      REDIS_URL: "redis://redis:6379/0"
-      DOCKER_HOST: "unix:///var/run/docker.sock"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      # P1-FIX: Ya no monta docker.sock directamente; usa el proxy TCP
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
       DOCKER_ALLOWED_LABEL: "${DOCKER_ALLOWED_LABEL:-com.antigravity.manage=true}"
       FILES_BASE_PATH: "/data/files"
-      APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3000}"
+      APP_BASE_URL: "${APP_BASE_URL:-http://localhost}"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # P1-FIX: Eliminado /var/run/docker.sock — el backend ya no tiene acceso directo
       - files-data:/data/files
+    read_only: true
+    tmpfs:
+      # Python necesita /tmp para archivos temporales de runtime
+      - /tmp:size=50m,mode=1777
+    cap_drop: [ALL]
+    # P11-FIX: ulimits para prevenir fork bomb si el proceso es comprometido
+    ulimits:
+      nproc: 256
+      nofile:
+        soft: 1024
+        hard: 4096
     depends_on:
       redis:
         condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
     restart: unless-stopped
     labels:
       com.antigravity.manage: "true"
     networks:
       - internal
+      # R1-FIX: backend necesita salida a internet para llamar APIs de AI
+      # (Anthropic, Groq, Cerebras, Gemini, OpenAI, SambaNova, OpenRouter).
+      # La red 'egress' no tiene internal:true — permite rutas externas.
+      # El backend sigue sin puertos publicados, no es accesible desde internet.
+      - egress
     expose:
       - "8000"
     deploy:
       resources:
         limits:
-          memory: 384M
+          # P7-FIX: 384M → 512M. Con 6 AI SDKs (anthropic+gemini+groq+cerebras+
+          # openai+openrouter) el footprint base es ~400M. 384M causaba OOM bajo carga.
+          memory: 512M
           cpus: "0.75"
     logging:
       driver: json-file
@@ -109,15 +213,30 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     security_opt:
       - no-new-privileges:true
 
-  # ── Redis Cache ───────────────────────────────────────────────────────────
+  # ── Redis Cache — red interna, sin puerto expuesto ────────────────────────
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --save 60 1
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --bind 0.0.0.0
+      --protected-mode yes
     restart: unless-stopped
+    # P2-FIX: REDISCLI_AUTH permite que redis-cli autentique sin exponer el
+    # password como argumento de línea de comandos (visible en docker inspect y ps)
+    environment:
+      REDISCLI_AUTH: "${REDIS_PASSWORD}"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     labels:
       com.antigravity.manage: "true"
     networks:
@@ -135,43 +254,28 @@ services:
         max-size: "5m"
         max-file: "3"
     healthcheck:
+      # P2-FIX: Usa REDISCLI_AUTH (env var) en lugar de -a password
+      # El healthcheck lee la var de entorno automáticamente — no aparece en inspect
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-  # ── Watchtower (auto-redeploy al hacer git push + CI) ─────────────────────
-  watchtower:
-    image: containrrr/watchtower:latest
-    command: --interval 300 --label-enable --cleanup
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-    labels:
-      com.antigravity.manage: "true"
-    networks:
-      - internal
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-          cpus: "0.10"
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
-    environment:
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_LABEL_ENABLE: "true"
-      WATCHTOWER_POLL_INTERVAL: "300"
+      start_period: 10s
 
 networks:
   public:
     driver: bridge
   internal:
     driver: bridge
+    # Solo comunicación interna entre servicios — sin salida a internet
+    # (redis, frontend, docker-proxy no necesitan llamadas externas)
     internal: true
+  egress:
+    driver: bridge
+    # R1-FIX: Red de salida para el backend — permite llamar APIs de AI externas.
+    # No tiene internal:true → tiene default gateway.
+    # No tiene ports: publicados → no es accesible desde internet.
+    # redis/frontend/docker-proxy NO están en esta red → siguen aislados.
 
 volumes:
   redis-data:

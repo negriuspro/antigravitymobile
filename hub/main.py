@@ -15,11 +15,17 @@ from core.config import settings
 
 app = FastAPI(title="Antigravity Hub", version="1.0.0")
 
+_cors_origins = [settings.app_base_url] if settings.app_base_url else []
+# Flutter Web se sirve desde el mismo Nginx, no necesita CORS amplio.
+# En desarrollo local se permite localhost con puertos comunes.
+if not _cors_origins or "localhost" in settings.app_base_url:
+    _cors_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
 )
 
 app.include_router(health_router)
