@@ -26,11 +26,8 @@ class _ServersScreenState extends State<ServersScreen> {
   }
 
   Future<void> _loadUrl() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('hub_url');
-    if (saved != null) {
-      setState(() => _hubHttp = saved.replaceFirst('ws://', 'http://').replaceFirst('wss://', 'https://'));
-    }
+    final wsUrl = await HubService.currentUrl();
+    setState(() => _hubHttp = wsUrl.replaceFirst('ws://', 'http://').replaceFirst('wss://', 'https://'));
     _refresh();
     _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
   }
@@ -44,8 +41,9 @@ class _ServersScreenState extends State<ServersScreen> {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         setState(() => _containers = List<Map<String, dynamic>>.from(data['containers'] as List));
       }
-    } catch (_) {
-      // UI polling should fail quietly; offline state is represented by stale/empty data.
+    } catch (e, st) {
+      // Polling silencioso: la UI ya representa el estado offline con datos vacíos/stale.
+      debugPrint('[ServersScreen._refresh] poll error: $e\n$st');
     }
     if (mounted) setState(() => _loading = false);
   }

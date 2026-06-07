@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../theme/app_theme.dart';
 import '../services/session_service.dart';
 import '../services/api_keys_service.dart';
 import '../services/token_service.dart';
 import '../services/hub_service.dart';
+import '../utils/date_format.dart';
+import '../widgets/chat_bubble.dart';
 import '../widgets/chat_toolbar.dart';
 import '../widgets/provider_status_dot.dart';
 
@@ -49,9 +50,8 @@ class _ChatClaudeScreenState extends State<ChatClaudeScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('hub_url');
-    if (saved != null) setState(() => _hubWs = saved);
+    final url = await HubService.currentUrl();
+    setState(() => _hubWs = url);
     _startNewSession();
   }
 
@@ -85,16 +85,14 @@ class _ChatClaudeScreenState extends State<ChatClaudeScreen> {
         setState(() => _running = false);
         _saveSession();
       }
-    } catch (_) {}
+    } catch (e, st) {
+      debugPrint('[ChatClaudeScreen._onData] JSON parse error: $e\n$st');
+    }
   }
 
   Future<void> _saveSession() async {
-    if (_currentSession == null || _messages.isEmpty) return;
-    if (_currentSession!.title == 'Nueva sesión') {
-      final first = _messages.firstWhere((m) => !m.isAssistant, orElse: () => _messages.first);
-      _currentSession!.title = first.content.length > 40 ? '${first.content.substring(0, 40)}...' : first.content;
-    }
-    await _sessions.save(_currentSession!);
+    if (_currentSession == null) return;
+    await _sessions.saveWithAutoTitle(_currentSession!, _messages);
   }
 
   Future<void> _send() async {
@@ -177,7 +175,7 @@ class _ChatClaudeScreenState extends State<ChatClaudeScreen> {
                     controller: _scroll,
                     padding: const EdgeInsets.all(12),
                     itemCount: _messages.length,
-                    itemBuilder: (_, i) => _Bubble(msg: _messages[i], color: _color),
+                    itemBuilder: (_, i) => ChatBubble(msg: _messages[i], accentColor: _color),
                   ),
           ),
           ChatToolbar(
@@ -249,7 +247,7 @@ class _ChatClaudeScreenState extends State<ChatClaudeScreen> {
                         return ListTile(
                           leading: Icon(active ? Icons.chat_bubble : Icons.chat_bubble_outline, color: active ? _color : AppTheme.textSecondary, size: 20),
                           title: Text(s.title, style: TextStyle(color: active ? _color : AppTheme.textPrimary, fontSize: 13)),
-                          subtitle: Text('${s.messages.length} msgs · ${_fmt(s.createdAt)}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                          subtitle: Text('${s.messages.length} msgs · ${formatRelativeDate(s.createdAt)}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_outline, color: AppTheme.textSecondary, size: 18),
                             onPressed: () async {
@@ -271,47 +269,6 @@ class _ChatClaudeScreenState extends State<ChatClaudeScreen> {
     );
   }
 
-  String _fmt(DateTime dt) {
-    final d = DateTime.now().difference(dt);
-    if (d.inMinutes < 1) return 'ahora';
-    if (d.inHours < 1) return 'hace ${d.inMinutes}m';
-    if (d.inDays < 1) return 'hace ${d.inHours}h';
-    return '${dt.day}/${dt.month}';
-  }
 }
 
-class _Bubble extends StatelessWidget {
-  final ChatMessage msg;
-  final Color color;
-  const _Bubble({required this.msg, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = !msg.isAssistant;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Column(
-        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          if (msg.imageB64 != null)
-            Container(
-              margin: const EdgeInsets.only(bottom: 4),
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.6),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.memory(base64Decode(msg.imageB64!.split(',').last), fit: BoxFit.cover),
-              ),
-            ),
-          if (msg.content.isNotEmpty && msg.content != '[Imagen adjunta]')
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
-              decoration: BoxDecoration(color: isUser ? color : AppTheme.surface, borderRadius: BorderRadius.circular(16), border: isUser ? null : Border.all(color: AppTheme.border)),
-              child: Text(msg.content, style: TextStyle(color: isUser ? Colors.white : AppTheme.textPrimary, fontSize: 14)),
-            ),
-        ],
-      ),
-    );
-  }
-}
+// _Bubble reemplazado por ChatBubble (widgets/chat_bubble.dart)

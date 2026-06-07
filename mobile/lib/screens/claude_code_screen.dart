@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../theme/app_theme.dart';
 import '../services/session_service.dart';
 import '../services/token_service.dart';
 import '../services/api_keys_service.dart';
 import '../services/hub_service.dart';
+import '../utils/date_format.dart';
+import '../widgets/chat_bubble.dart';
 import '../widgets/chat_toolbar.dart';
 import '../widgets/provider_status_dot.dart';
 
@@ -19,7 +20,8 @@ class _Model {
 }
 
 const _agents = [
-  _Agent('Claude Code', 'claude_code', Icons.terminal, Color(0xFFCC785C), '/claude/stream'),
+  _Agent('Claude Code', 'claude_code', Icons.terminal, Color(0xFFCC785C),
+      '/claude/stream'),
   _Agent('Codex', 'codex', Icons.code, Color(0xFF10A37F), '/codex/stream'),
   _Agent('AGI', 'agi', Icons.hub, Color(0xFF9B59B6), '/agi/stream'),
   _Agent('Claude', 'claude', Icons.auto_awesome, Color(0xFFCC785C), null),
@@ -64,7 +66,12 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
   // Agentes que YA tienen acceso al sistema (no necesitan orquestador)
   bool get _isSystemAgent => _selected.endpoint != null;
   // Agentes de chat que pueden activar modo orquestador
-  bool get _canOrchestrate => !_isSystemAgent && (_selected.id == 'groq' || _selected.id == 'cerebras' || _selected.id == 'gemini' || _selected.id == 'claude');
+  bool get _canOrchestrate =>
+      !_isSystemAgent &&
+      (_selected.id == 'groq' ||
+          _selected.id == 'cerebras' ||
+          _selected.id == 'gemini' ||
+          _selected.id == 'claude');
 
   static const _modelOptions = {
     'claude_code': [
@@ -79,28 +86,29 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
     ],
     'agi': [
       _Model('llama-3.3-70b-versatile', 'Llama 3.3 70B', 'Fast'),
-      _Model('meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout', 'Fast'),
+      _Model(
+          'meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout', 'Fast'),
       _Model('qwen/qwen3-32b', 'Qwen3 32B', 'Smart'),
     ],
     'claude': [
       _Model('claude-sonnet-4-6', 'Claude Sonnet 4.6', 'Smart'),
-      _Model('claude-opus-4-7', 'Claude Opus 4.7', 'Max'),
+      _Model('claude-opus-4-8', 'Claude Opus 4.8', 'Max'),
       _Model('claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'Fast'),
     ],
     'gemini': [
-      _Model('gemini-2.0-flash', 'Gemini 2.0 Flash', 'Fast'),
-      _Model('gemini-1.5-flash', 'Gemini 1.5 Flash', 'Fast'),
-      _Model('gemini-1.5-pro', 'Gemini 1.5 Pro', 'Smart'),
+      _Model('gemini-2.5-flash', 'Gemini 2.5 Flash', 'Fast'),
+      _Model('gemini-2.5-pro', 'Gemini 2.5 Pro', 'Smart'),
+      _Model('gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite', 'Fast'),
     ],
     'groq': [
       _Model('llama-3.3-70b-versatile', 'Llama 3.3 70B', 'Fast'),
-      _Model('meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout', 'Fast'),
+      _Model(
+          'meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout', 'Fast'),
       _Model('qwen/qwen3-32b', 'Qwen3 32B', 'Smart'),
     ],
     'cerebras': [
-      _Model('qwen-3-235b-a22b-instruct-2507', 'Qwen3 235B', 'Smart'),
       _Model('gpt-oss-120b', 'GPT OSS 120B', 'Smart'),
-      _Model('llama3.1-8b', 'Llama 3.1 8B', 'Fast'),
+      _Model('zai-glm-4.7', 'Z.ai GLM 4.7', 'Reason'),
     ],
   };
 
@@ -118,9 +126,8 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
   }
 
   Future<void> _loadUrl() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('hub_url');
-    if (saved != null) setState(() => _hubWs = saved);
+    final url = await HubService.currentUrl();
+    setState(() => _hubWs = url);
     _startNewSession();
   }
 
@@ -160,7 +167,10 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
           _saveSession();
           return;
         }
-      } catch (_) {}
+      } catch (e, st) {
+        debugPrint(
+            '[ClaudeCodeScreen._onData] JSON parse error (endpoint): $e\n$st');
+      }
       setState(() {
         if (_messages.isNotEmpty && _messages.last.isAssistant) {
           _messages.last.content += raw;
@@ -173,7 +183,8 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
         final json = jsonDecode(raw) as Map<String, dynamic>;
         final type = json['type'] as String? ?? '';
         if (type == 'start') {
-          setState(() => _messages.add(ChatMessage(content: '', isAssistant: true)));
+          setState(
+              () => _messages.add(ChatMessage(content: '', isAssistant: true)));
         } else if (type == 'chunk') {
           final last = _messages.last;
           setState(() => last.content += json['text'] as String? ?? '');
@@ -181,20 +192,17 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
           setState(() => _running = false);
           _saveSession();
         }
-      } catch (_) {}
+      } catch (e, st) {
+        debugPrint(
+            '[ClaudeCodeScreen._onData] JSON parse error (hub): $e\n$st');
+      }
     }
     _scrollDown();
   }
 
   Future<void> _saveSession() async {
-    if (_currentSession == null || _messages.isEmpty) return;
-    if (_currentSession!.title == 'Nueva sesión' && _messages.isNotEmpty) {
-      final firstMsg = _messages.firstWhere((m) => !m.isAssistant, orElse: () => _messages.first);
-      _currentSession!.title = firstMsg.content.length > 40
-          ? '${firstMsg.content.substring(0, 40)}...'
-          : firstMsg.content;
-    }
-    await _sessions.save(_currentSession!);
+    if (_currentSession == null) return;
+    await _sessions.saveWithAutoTitle(_currentSession!, _messages);
   }
 
   Future<void> _send() async {
@@ -203,7 +211,10 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
 
     final displayText = text.isNotEmpty ? text : '[Imagen adjunta]';
     setState(() {
-      _messages.add(ChatMessage(content: displayText, isAssistant: false, imageB64: _pendingImageB64));
+      _messages.add(ChatMessage(
+          content: displayText,
+          isAssistant: false,
+          imageB64: _pendingImageB64));
       _running = true;
       _controller.clear();
     });
@@ -212,18 +223,43 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
     final userKeys = await _keysSvc.loadAll();
 
     if (_selected.endpoint != null) {
-      _ws?.sink.add(jsonEncode({'prompt': text, if (_selectedModel != null) 'model': _selectedModel}));
+      _ws?.sink.add(jsonEncode({
+        'prompt': text,
+        if (_selectedModel != null) 'model': _selectedModel
+      }));
     } else if (_orchestrator && _canOrchestrate) {
-      _ws?.sink.add(jsonEncode({'prompt': text, 'provider': _selected.id, if (_selectedModel != null) 'model': _selectedModel, if (userKeys.isNotEmpty) 'api_keys': userKeys}));
+      _ws?.sink.add(jsonEncode({
+        'prompt': text,
+        'provider': _selected.id,
+        if (_selectedModel != null) 'model': _selectedModel,
+        if (userKeys.isNotEmpty) 'api_keys': userKeys
+      }));
       _tokenSvc.recordRequest(_selected.id);
     } else {
-      final history = _messages.where((m) => m.content.isNotEmpty).map((m) => {'role': m.isAssistant ? 'assistant' : 'user', 'content': m.content}).toList();
-      final payload = <String, dynamic>{'provider': _selected.id, 'messages': history, if (_selectedModel != null) 'model': _selectedModel, if (userKeys.isNotEmpty) 'api_keys': userKeys};
-      if (_pendingImageB64 != null) { payload['image'] = _pendingImageB64; payload['image_mime'] = _pendingImageMime ?? 'image/jpeg'; }
+      final history = _messages
+          .where((m) => m.content.isNotEmpty)
+          .map((m) => {
+                'role': m.isAssistant ? 'assistant' : 'user',
+                'content': m.content
+              })
+          .toList();
+      final payload = <String, dynamic>{
+        'provider': _selected.id,
+        'messages': history,
+        if (_selectedModel != null) 'model': _selectedModel,
+        if (userKeys.isNotEmpty) 'api_keys': userKeys
+      };
+      if (_pendingImageB64 != null) {
+        payload['image'] = _pendingImageB64;
+        payload['image_mime'] = _pendingImageMime ?? 'image/jpeg';
+      }
       _ws?.sink.add(jsonEncode(payload));
       _tokenSvc.recordRequest(_selected.id);
     }
-    setState(() { _pendingImageB64 = null; _pendingImageMime = null; });
+    setState(() {
+      _pendingImageB64 = null;
+      _pendingImageMime = null;
+    });
   }
 
   void _toggleOrchestrator() {
@@ -270,7 +306,9 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                _currentSession?.title == 'Nueva sesión' ? _selected.label : _currentSession!.title,
+                _currentSession?.title == 'Nueva sesión'
+                    ? _selected.label
+                    : _currentSession!.title,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -282,7 +320,8 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
               onTap: _showModelPicker,
               child: Container(
                 margin: const EdgeInsets.only(right: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppTheme.surface,
                   borderRadius: BorderRadius.circular(20),
@@ -293,21 +332,28 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                   children: [
                     Text(
                       _currentModel?.label ?? 'Modelo',
-                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12),
+                      style: const TextStyle(
+                          color: AppTheme.textPrimary, fontSize: 12),
                     ),
                     if (_currentModel != null) ...[
                       const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
                         decoration: BoxDecoration(
                           color: _selected.color.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Text(_currentModel!.badge, style: TextStyle(color: _selected.color, fontSize: 9, fontWeight: FontWeight.w600)),
+                        child: Text(_currentModel!.badge,
+                            style: TextStyle(
+                                color: _selected.color,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600)),
                       ),
                     ],
                     const SizedBox(width: 4),
-                    const Icon(Icons.keyboard_arrow_down, color: AppTheme.textSecondary, size: 16),
+                    const Icon(Icons.keyboard_arrow_down,
+                        color: AppTheme.textSecondary, size: 16),
                   ],
                 ),
               ),
@@ -327,7 +373,11 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                 child: const Row(mainAxisSize: MainAxisSize.min, children: [
                   Icon(Icons.circle, color: Colors.green, size: 8),
                   SizedBox(width: 5),
-                  Text('Root', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.w700)),
+                  Text('Root',
+                      style: TextStyle(
+                          color: Colors.green,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700)),
                 ]),
               ),
             )
@@ -343,23 +393,36 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                   border: Border.all(color: Colors.red.withValues(alpha: 0.5)),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.circle, color: Colors.red.withValues(alpha: 0.7), size: 8),
+                  Icon(Icons.circle,
+                      color: Colors.red.withValues(alpha: 0.7), size: 8),
                   const SizedBox(width: 5),
-                  Text('Acceso', style: TextStyle(color: Colors.red.withValues(alpha: 0.8), fontSize: 10, fontWeight: FontWeight.w700)),
+                  Text('Acceso',
+                      style: TextStyle(
+                          color: Colors.red.withValues(alpha: 0.8),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700)),
                 ]),
               ),
             ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
-            child: ProviderStatusDot(providerId: _selected.id, showLabel: false),
+            child:
+                ProviderStatusDot(providerId: _selected.id, showLabel: false),
           ),
-          IconButton(icon: const Icon(Icons.history), onPressed: _showSessionHistory, tooltip: 'Historial'),
-          IconButton(icon: const Icon(Icons.add), onPressed: _startNewSession, tooltip: 'Nueva sesión'),
+          IconButton(
+              icon: const Icon(Icons.history),
+              onPressed: _showSessionHistory,
+              tooltip: 'Historial'),
+          IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: _startNewSession,
+              tooltip: 'Nueva sesión'),
         ],
       ),
       body: Column(
         children: [
-          _AgentBar(agents: _agents, selected: _selected, onSelect: _switchAgent),
+          _AgentBar(
+              agents: _agents, selected: _selected, onSelect: _switchAgent),
           Expanded(
             child: _messages.isEmpty
                 ? Center(
@@ -368,9 +431,14 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                       children: [
                         Icon(_selected.icon, color: _selected.color, size: 48),
                         const SizedBox(height: 12),
-                        Text(_selected.label, style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.w600)),
+                        Text(_selected.label,
+                            style: const TextStyle(
+                                color: AppTheme.accent,
+                                fontWeight: FontWeight.w600)),
                         const SizedBox(height: 4),
-                        const Text('Escribe un mensaje para empezar', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                        const Text('Escribe un mensaje para empezar',
+                            style: TextStyle(
+                                color: AppTheme.textSecondary, fontSize: 12)),
                       ],
                     ),
                   )
@@ -378,7 +446,10 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                     controller: _scroll,
                     padding: const EdgeInsets.all(12),
                     itemCount: _messages.length,
-                    itemBuilder: (_, i) => _BubbleWidget(msg: _messages[i], agentColor: _selected.color),
+                    itemBuilder: (_, i) => ChatBubble(
+                        msg: _messages[i],
+                        accentColor: _selected.color,
+                        monospaceAssistant: true),
                   ),
           ),
           ChatToolbar(
@@ -386,9 +457,15 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
             controller: _controller,
             running: _running,
             onSend: _send,
-            onImageSelected: (b64, mime) => setState(() { _pendingImageB64 = b64; _pendingImageMime = mime; }),
+            onImageSelected: (b64, mime) => setState(() {
+              _pendingImageB64 = b64;
+              _pendingImageMime = mime;
+            }),
             pendingImageB64: _pendingImageB64,
-            onClearImage: () => setState(() { _pendingImageB64 = null; _pendingImageMime = null; }),
+            onClearImage: () => setState(() {
+              _pendingImageB64 = null;
+              _pendingImageMime = null;
+            }),
           ),
         ],
       ),
@@ -399,31 +476,47 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Seleccionar modelo', style: TextStyle(color: AppTheme.accent, fontWeight: FontWeight.w600, fontSize: 16)),
+            const Text('Seleccionar modelo',
+                style: TextStyle(
+                    color: AppTheme.accent,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16)),
             const SizedBox(height: 12),
             ..._currentModels.map((m) {
               final active = _currentModel?.id == m.id;
               return ListTile(
-                title: Text(m.label, style: TextStyle(color: active ? _selected.color : AppTheme.textPrimary)),
+                title: Text(m.label,
+                    style: TextStyle(
+                        color:
+                            active ? _selected.color : AppTheme.textPrimary)),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: _selected.color.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Text(m.badge, style: TextStyle(color: _selected.color, fontSize: 11, fontWeight: FontWeight.w600)),
+                      child: Text(m.badge,
+                          style: TextStyle(
+                              color: _selected.color,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600)),
                     ),
-                    if (active) ...[const SizedBox(width: 8), Icon(Icons.check, color: _selected.color, size: 18)],
+                    if (active) ...[
+                      const SizedBox(width: 8),
+                      Icon(Icons.check, color: _selected.color, size: 18)
+                    ],
                   ],
                 ),
                 onTap: () {
@@ -440,13 +533,15 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
 
   void _showSessionHistory() async {
     final allSessions = await _sessions.loadAll();
-    final filtered = allSessions.where((s) => s.agentId == _selected.id).toList();
+    final filtered =
+        allSessions.where((s) => s.agentId == _selected.id).toList();
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.surface,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModalState) => DraggableScrollableSheet(
           initialChildSize: 0.6,
@@ -459,19 +554,28 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Row(
                   children: [
-                    Text('Historial — ${_selected.label}', style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.w600, fontSize: 16)),
+                    Text('Historial — ${_selected.label}',
+                        style: const TextStyle(
+                            color: AppTheme.accent,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16)),
                     const Spacer(),
                     TextButton.icon(
                       icon: const Icon(Icons.add, size: 16),
                       label: const Text('Nueva'),
-                      onPressed: () { Navigator.pop(ctx); _startNewSession(); },
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _startNewSession();
+                      },
                     ),
                   ],
                 ),
               ),
               Expanded(
                 child: filtered.isEmpty
-                    ? const Center(child: Text('No hay sesiones guardadas', style: TextStyle(color: AppTheme.textSecondary)))
+                    ? const Center(
+                        child: Text('No hay sesiones guardadas',
+                            style: TextStyle(color: AppTheme.textSecondary)))
                     : ListView.builder(
                         controller: sc,
                         itemCount: filtered.length,
@@ -480,23 +584,35 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
                           final isActive = s.id == _currentSession?.id;
                           return ListTile(
                             leading: Icon(
-                              isActive ? Icons.chat_bubble : Icons.chat_bubble_outline,
-                              color: isActive ? _selected.color : AppTheme.textSecondary,
+                              isActive
+                                  ? Icons.chat_bubble
+                                  : Icons.chat_bubble_outline,
+                              color: isActive
+                                  ? _selected.color
+                                  : AppTheme.textSecondary,
                               size: 20,
                             ),
-                            title: Text(s.title, style: TextStyle(color: isActive ? _selected.color : AppTheme.textPrimary, fontSize: 13)),
+                            title: Text(s.title,
+                                style: TextStyle(
+                                    color: isActive
+                                        ? _selected.color
+                                        : AppTheme.textPrimary,
+                                    fontSize: 13)),
                             subtitle: Text(
-                              '${s.messages.length} mensajes · ${_formatDate(s.createdAt)}',
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                              '${s.messages.length} mensajes · ${formatRelativeDate(s.createdAt)}',
+                              style: const TextStyle(
+                                  color: AppTheme.textSecondary, fontSize: 11),
                             ),
                             trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline, color: AppTheme.textSecondary, size: 18),
+                              icon: const Icon(Icons.delete_outline,
+                                  color: AppTheme.textSecondary, size: 18),
                               onPressed: () async {
                                 await _sessions.delete(s.id);
                                 final updated = await _sessions.loadAll();
                                 setModalState(() => filtered
                                   ..clear()
-                                  ..addAll(updated.where((x) => x.agentId == _selected.id)));
+                                  ..addAll(updated.where(
+                                      (x) => x.agentId == _selected.id)));
                                 if (s.id == _currentSession?.id) {
                                   Navigator.pop(ctx);
                                   _startNewSession();
@@ -520,15 +636,6 @@ class _ClaudeCodeScreenState extends State<ClaudeCodeScreen> {
       ),
     );
   }
-
-  String _formatDate(DateTime dt) {
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return 'ahora';
-    if (diff.inHours < 1) return 'hace ${diff.inMinutes}m';
-    if (diff.inDays < 1) return 'hace ${diff.inHours}h';
-    return '${dt.day}/${dt.month}';
-  }
 }
 
 class _AgentBar extends StatelessWidget {
@@ -536,7 +643,8 @@ class _AgentBar extends StatelessWidget {
   final _Agent selected;
   final void Function(_Agent) onSelect;
 
-  const _AgentBar({required this.agents, required this.selected, required this.onSelect});
+  const _AgentBar(
+      {required this.agents, required this.selected, required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
@@ -555,7 +663,8 @@ class _AgentBar extends StatelessWidget {
               margin: const EdgeInsets.only(right: 8),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
-                color: active ? a.color.withValues(alpha: 0.15) : AppTheme.surface,
+                color:
+                    active ? a.color.withValues(alpha: 0.15) : AppTheme.surface,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: active ? a.color : AppTheme.border),
               ),
@@ -563,9 +672,16 @@ class _AgentBar extends StatelessWidget {
                 children: [
                   ProviderStatusDot(providerId: a.id, showLabel: false),
                   const SizedBox(width: 5),
-                  Icon(a.icon, color: active ? a.color : AppTheme.textSecondary, size: 14),
+                  Icon(a.icon,
+                      color: active ? a.color : AppTheme.textSecondary,
+                      size: 14),
                   const SizedBox(width: 6),
-                  Text(a.label, style: TextStyle(color: active ? a.color : AppTheme.textSecondary, fontSize: 12, fontWeight: active ? FontWeight.w600 : FontWeight.normal)),
+                  Text(a.label,
+                      style: TextStyle(
+                          color: active ? a.color : AppTheme.textSecondary,
+                          fontSize: 12,
+                          fontWeight:
+                              active ? FontWeight.w600 : FontWeight.normal)),
                 ],
               ),
             ),
@@ -576,34 +692,4 @@ class _AgentBar extends StatelessWidget {
   }
 }
 
-class _BubbleWidget extends StatelessWidget {
-  final ChatMessage msg;
-  final Color agentColor;
-  const _BubbleWidget({required this.msg, required this.agentColor});
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = !msg.isAssistant;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
-        decoration: BoxDecoration(
-          color: isUser ? agentColor : AppTheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: isUser ? null : Border.all(color: AppTheme.border),
-        ),
-        child: Text(
-          msg.content,
-          style: TextStyle(
-            color: isUser ? Colors.white : AppTheme.textPrimary,
-            fontSize: 14,
-            fontFamily: msg.isAssistant ? 'monospace' : null,
-          ),
-        ),
-      ),
-    );
-  }
-}
+// _BubbleWidget reemplazado por ChatBubble (widgets/chat_bubble.dart)

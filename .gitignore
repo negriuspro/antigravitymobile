@@ -9,6 +9,7 @@ guia/
 
 # Environment
 .env
+.env.dev
 .env.local
 .env.production
 .env*.local

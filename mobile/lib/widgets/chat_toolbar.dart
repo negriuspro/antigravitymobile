@@ -7,17 +7,9 @@ import 'package:speech_to_text/speech_to_text.dart';
 import '../theme/app_theme.dart';
 import '../services/hub_service.dart';
 
-// Carpetas del escritorio del usuario (null path = sin carpeta)
-const kDesktopFolders = [
-  _Folder('Sin carpeta', null),
-  _Folder('AntigravityMobile', r'C:\Users\je416\Desktop\AntigravityMobile'),
-  _Folder('AI_IDE_Agents', r'C:\Users\je416\Desktop\AI_IDE_Agents'),
-  _Folder('proyectos con ia', r'C:\Users\je416\Desktop\proyectos con ia'),
-  _Folder('todos mis proyectos de codigo', r'C:\Users\je416\Desktop\todos mis proyectos de codigo'),
-  _Folder('descargas', r'C:\Users\je416\Desktop\descargas'),
-  _Folder('ejecutables', r'C:\Users\je416\Desktop\ejecutables'),
-  _Folder('volviendo a programar', r'C:\Users\je416\Desktop\volviendo a programar'),
-];
+// AG-CORE-004: Las rutas de carpetas se cargan desde SharedPreferences en tiempo de
+// ejecución. No se compilan rutas de usuario en el bundle.
+// Clave: 'folder_shortcuts' → JSON: [{"name":"...","path":"..."}]
 
 class _Folder {
   final String name;
@@ -56,6 +48,8 @@ class _ChatToolbarState extends State<ChatToolbar> {
   String _currentFolder = 'Sin carpeta';
   String _currentFolderPath = '';
   String _hubBase = HubService.defaultHubUrl().replaceFirst('ws://', 'http://').replaceFirst('wss://', 'https://');
+  // AG-CORE-004: cargado desde SharedPreferences, nunca hardcodeado
+  List<_Folder> _folderShortcuts = [const _Folder('Sin carpeta', null)];
 
   @override
   void initState() {
@@ -68,7 +62,25 @@ class _ChatToolbarState extends State<ChatToolbar> {
     final prefs = await SharedPreferences.getInstance();
     final wsUrl = prefs.getString('hub_url') ?? HubService.defaultHubUrl();
     _hubBase = wsUrl.replaceFirst('ws://', 'http://').replaceFirst('wss://', 'https://');
+    _folderShortcuts = _loadFolderShortcuts(prefs);
     if (mounted) setState(() {});
+  }
+
+  /// AG-CORE-004: lee atajos de carpeta desde SharedPreferences.
+  /// Formato en prefs['folder_shortcuts']: [{"name":"X","path":"C:\\..."}]
+  List<_Folder> _loadFolderShortcuts(SharedPreferences prefs) {
+    final raw = prefs.getString('folder_shortcuts');
+    if (raw == null) return [const _Folder('Sin carpeta', null)];
+    try {
+      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+      return [
+        const _Folder('Sin carpeta', null),
+        ...list.map((e) => _Folder(e['name'] as String, e['path'] as String?)),
+      ];
+    } catch (e, st) {
+      debugPrint('[ChatToolbar._loadFolderShortcuts] JSON inválido: $e\n$st');
+      return [const _Folder('Sin carpeta', null)];
+    }
   }
 
   @override
@@ -263,7 +275,9 @@ class _ChatToolbarState extends State<ChatToolbar> {
           ]),
         ),
       );
-    } catch (_) {}
+    } catch (e, st) {
+      debugPrint('[ChatToolbar._showFolderBrowser] error: $e\n$st');
+    }
   }
 
   Future<void> _loadImageFromHub(String path) async {
@@ -275,7 +289,9 @@ class _ChatToolbarState extends State<ChatToolbar> {
       final b64 = data['data'] as String;
       final mime = data['mime'] as String;
       widget.onImageSelected(b64, mime);
-    } catch (_) {}
+    } catch (e, st) {
+      debugPrint('[ChatToolbar._loadImageFromHub] error: $e\n$st');
+    }
   }
 
   void _showFolderPicker() {
@@ -290,7 +306,7 @@ class _ChatToolbarState extends State<ChatToolbar> {
           const SizedBox(height: 4),
           const Text('Selecciona en qué proyecto estás trabajando', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
           const SizedBox(height: 12),
-          ...kDesktopFolders.map((f) {
+          ..._folderShortcuts.map((f) {
             final isSelected = f.name == _currentFolder;
             final isNone = f.path == null;
             return ListTile(

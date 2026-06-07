@@ -40,8 +40,7 @@ class _ProviderStatusDotState extends State<ProviderStatusDot> {
   Future<void> _check() async {
     setState(() => _status = ProviderStatus.checking);
 
-    final prefs = await SharedPreferences.getInstance();
-    final wsUrl = prefs.getString('hub_url') ?? HubService.defaultHubUrl();
+    final wsUrl = await HubService.currentUrl();
     final baseUrl = wsUrl.replaceFirst('ws://', 'http://').replaceFirst('wss://', 'https://');
 
     try {

@@ -56,6 +56,25 @@ class SessionService {
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
+  /// Guarda la sesión generando título automático desde el primer mensaje del usuario.
+  /// Consolida el patrón _saveSession duplicado en los 3 screens de chat.
+  Future<void> saveWithAutoTitle(
+    ChatSession session,
+    List<ChatMessage> messages,
+  ) async {
+    if (messages.isEmpty) return;
+    if (session.title == 'Nueva sesión') {
+      final first = messages.firstWhere(
+        (m) => !m.isAssistant,
+        orElse: () => messages.first,
+      );
+      session.title = first.content.length > 40
+          ? '${first.content.substring(0, 40)}...'
+          : first.content;
+    }
+    await save(session);
+  }
+
   Future<void> save(ChatSession session) async {
     final all = await loadAll();
     final idx = all.indexWhere((s) => s.id == session.id);

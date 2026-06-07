@@ -5,7 +5,7 @@ from core.config import settings
 
 async def stream_cerebras(
     messages: list,
-    model: str = "llama3.1-8b",
+    model: str = "gpt-oss-120b",
     api_key: Optional[str] = None,
 ) -> AsyncIterator[str]:
     key = (api_key or settings.cerebras_api_key or "").strip()

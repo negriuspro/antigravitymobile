@@ -13,33 +13,58 @@ FILES_BASE = os.environ.get("FILES_BASE_PATH", "/data/files")
 APP_ROOT = os.environ.get("AI_IDE_ROOT", "/app")
 
 TOOLS = [
-    {"type": "function", "function": {
-        "name": "read_file",
-        "description": "Lee el contenido de un archivo del servidor",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string", "description": "Ruta absoluta del archivo"}
-        }, "required": ["path"]},
-    }},
-    {"type": "function", "function": {
-        "name": "write_file",
-        "description": "Crea o sobreescribe un archivo en el área de datos permitida",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"},
-            "content": {"type": "string"},
-        }, "required": ["path", "content"]},
-    }},
-    {"type": "function", "function": {
-        "name": "list_files",
-        "description": "Lista archivos y carpetas de un directorio",
-        "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"}
-        }, "required": ["path"]},
-    }},
-    {"type": "function", "function": {
-        "name": "read_claude_rules",
-        "description": "Lee las reglas y contexto de Antigravity AI",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    }},
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Lee el contenido de un archivo del servidor",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Ruta absoluta del archivo",
+                    }
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Crea o sobreescribe un archivo en el área de datos permitida",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "Lista archivos y carpetas de un directorio",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_claude_rules",
+            "description": "Lee las reglas y contexto de Antigravity AI",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 SYSTEM_PROMPT = (
@@ -80,8 +105,14 @@ def _exec_tool(name: str, args: dict) -> str:
         elif name == "list_files":
             path = _safe_path(args["path"])
             entries = os.listdir(path)
-            dirs = [f"[DIR] {e}" for e in entries if os.path.isdir(os.path.join(path, e))]
-            files = [f"[FILE] {e}" for e in entries if not os.path.isdir(os.path.join(path, e))]
+            dirs = [
+                f"[DIR] {e}" for e in entries if os.path.isdir(os.path.join(path, e))
+            ]
+            files = [
+                f"[FILE] {e}"
+                for e in entries
+                if not os.path.isdir(os.path.join(path, e))
+            ]
             return "\n".join(dirs + files)
 
         elif name == "read_claude_rules":
@@ -93,7 +124,10 @@ def _exec_tool(name: str, args: dict) -> str:
                 if os.path.exists(p):
                     with open(p, "r", encoding="utf-8", errors="replace") as f:
                         rules.append(f"=== {p} ===\n{f.read()[:3000]}")
-            return "\n\n".join(rules) or "No se encontraron archivos de reglas en el servidor"
+            return (
+                "\n\n".join(rules)
+                or "No se encontraron archivos de reglas en el servidor"
+            )
 
     except PermissionError as e:
         logger.warning("AGI tool permission denied: %s", e)
@@ -106,23 +140,33 @@ def _exec_tool(name: str, args: dict) -> str:
 
 def _get_async_client(provider: str, key: str) -> tuple[AsyncOpenAI, str]:
     if provider == "cerebras":
-        return AsyncOpenAI(api_key=key, base_url="https://api.cerebras.ai/v1"), "llama-3.3-70b"
+        return (
+            AsyncOpenAI(api_key=key, base_url="https://api.cerebras.ai/v1"),
+            "gpt-oss-120b",
+        )
     elif provider == "gemini":
-        return AsyncOpenAI(
-            api_key=key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        ), "gemini-2.0-flash"
+        return (
+            AsyncOpenAI(
+                api_key=key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            ),
+            "gemini-2.5-flash",
+        )
     elif provider == "openrouter":
         app_url = os.environ.get("APP_BASE_URL", settings.app_base_url)
-        return AsyncOpenAI(
-            api_key=key,
-            base_url="https://openrouter.ai/api/v1",
-            default_headers={"HTTP-Referer": app_url, "X-Title": "Antigravity AI"},
-        ), "meta-llama/llama-3.3-70b-instruct:free"
+        return (
+            AsyncOpenAI(
+                api_key=key,
+                base_url="https://openrouter.ai/api/v1",
+                default_headers={"HTTP-Referer": app_url, "X-Title": "Antigravity AI"},
+            ),
+            "meta-llama/llama-3.3-70b-instruct:free",
+        )
     else:  # groq default
-        return AsyncOpenAI(
-            api_key=key, base_url="https://api.groq.com/openai/v1"
-        ), "llama-3.3-70b-versatile"
+        return (
+            AsyncOpenAI(api_key=key, base_url="https://api.groq.com/openai/v1"),
+            "llama-3.3-70b-versatile",
+        )
 
 
 @router.websocket("/agi/stream")
@@ -172,19 +216,44 @@ async def agi_agent(ws: WebSocket):
                             {
                                 "id": tc.id,
                                 "type": "function",
-                                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
                             }
                             for tc in msg.tool_calls
                         ]
-                        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": tool_calls_data})
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": msg.content or "",
+                                "tool_calls": tool_calls_data,
+                            }
+                        )
 
                         for tc in msg.tool_calls:
                             args = json.loads(tc.function.arguments)
-                            preview = ", ".join(f"{k}={repr(v)[:25]}" for k, v in args.items() if k != "content")
+                            preview = ", ".join(
+                                f"{k}={repr(v)[:25]}"
+                                for k, v in args.items()
+                                if k != "content"
+                            )
                             await ws.send_text(f"\n**{tc.function.name}**({preview})\n")
-                            result = await asyncio.to_thread(_exec_tool, tc.function.name, args)
-                            await ws.send_text(f"```\n{result[:500]}\n```\n" if len(result) > 50 else f"`{result}`\n")
-                            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                            result = await asyncio.to_thread(
+                                _exec_tool, tc.function.name, args
+                            )
+                            await ws.send_text(
+                                f"```\n{result[:500]}\n```\n"
+                                if len(result) > 50
+                                else f"`{result}`\n"
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "content": result,
+                                }
+                            )
                     else:
                         await ws.send_text(msg.content or "")
                         break
@@ -193,7 +262,9 @@ async def agi_agent(ws: WebSocket):
                 logger.error("AGI [%s] error: %s", provider, e)
                 await ws.send_text(f"[Error AGI {provider}: {e}]")
 
-            await ws.send_json({"done": True, "code": 0, "provider": provider, "model": use_model})
+            await ws.send_json(
+                {"done": True, "code": 0, "provider": provider, "model": use_model}
+            )
 
     except WebSocketDisconnect:
         pass
