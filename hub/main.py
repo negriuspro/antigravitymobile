@@ -1,4 +1,5 @@
 import logging
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
 from fastapi import FastAPI
@@ -16,6 +17,10 @@ from core.config import settings
 app = FastAPI(title="Antigravity Hub", version="1.0.0")
 
 _cors_origins = [settings.app_base_url] if settings.app_base_url else []
+# AngelOS consume /health y otros endpoints desde otro origen (dashboard).
+_cors_origins += [
+    o.strip() for o in settings.cors_extra_origins.split(",") if o.strip()
+]
 # Flutter Web se sirve desde el mismo Nginx, no necesita CORS amplio.
 # En desarrollo local se permite localhost con puertos comunes.
 if not _cors_origins or "localhost" in settings.app_base_url:
@@ -40,4 +45,5 @@ app.include_router(providers_router)
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host=settings.hub_host, port=settings.hub_port, reload=True)

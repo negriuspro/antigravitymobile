@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     docker_allowed_label: str = "com.antigravity.manage=true"
     files_base_path: str = "/data/files"
     app_base_url: str = "http://localhost"
+    cors_extra_origins: str = "http://localhost:5004,http://192.168.100.6:3005"
 
     class Config:
         env_file = ".env"
